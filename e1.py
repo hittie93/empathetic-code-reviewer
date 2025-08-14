@@ -6,13 +6,18 @@ import requests
 from typing import Dict, List
 import re
 import time
+import os 
+from dotenv import load_dotenv
 
- 
+# Load environment variables from .env file
+load_dotenv()
+
+# Get Grok API key
 
 class EmpathethicCodeReviewer:
     def __init__(self, groq_api_key: str):
         """Initialize the empathetic code reviewer with Groq API key"""
-        self.groq_api_key = "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"
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.base_url = "https://api.groq.com/openai/v1/chat/completions"
         self.model = "llama3-8b-8192"  # Fast and free model
         
