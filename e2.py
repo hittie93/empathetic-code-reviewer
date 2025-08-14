@@ -1,23 +1,28 @@
-# 🚀 HACKATHON-READY: Empathetic Code Reviewer with Groq
-# Copy this directly into your notebook and run!
-
-# First, install required packages (run this cell first)
-# !pip install requests
+# Empathetic Code Reviewer using Groq API
+# Secure version – loads API key from .env instead of embedding it
 
 import json
 import requests
 from typing import Dict, List
 import re
+import time
+import os
+from dotenv import load_dotenv
 
-# 🔥 MAIN CLASS - Empathetic Code Reviewer
-class EmpathethicCodeReviewer:
-    def __init__(self, groq_api_key: str):
-        self.groq_api_key = groq_api_key
+# Load environment variables from .env file
+load_dotenv()
+
+class EmpatheticCodeReviewer:
+    def __init__(self):
+        """Initialize the empathetic code reviewer with API key from .env"""
+        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        if not self.groq_api_key:
+            raise ValueError("❌ GROQ_API_KEY not found in environment variables. Please set it in your .env file.")
         self.base_url = "https://api.groq.com/openai/v1/chat/completions"
-        self.model = "llama3-8b-8192"  # Fast and free!
+        self.model = "llama3-8b-8192"  # Fast and free model
         
-    def make_groq_request(self, prompt: str) -> str:
-        """Make request to Groq API"""
+    def make_groq_request(self, messages: List[Dict], max_tokens: int = 500, temperature: float = 0.7) -> str:
+        """Make a request to Groq API"""
         headers = {
             "Authorization": f"Bearer {self.groq_api_key}",
             "Content-Type": "application/json"
@@ -25,125 +30,155 @@ class EmpathethicCodeReviewer:
         
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": "You are an empathetic senior developer who transforms harsh code review feedback into constructive, educational guidance."},
-                {"role": "user", "content": prompt}
-            ],
-            "max_tokens": 600,
-            "temperature": 0.7,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
         }
         
         try:
             response = requests.post(self.base_url, headers=headers, json=payload)
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.exceptions.RequestException as e:
+            print(f"Error calling Groq API: {e}")
+            return self.get_fallback_response()
         except Exception as e:
-            print(f"API Error: {e}")
+            print(f"Unexpected error: {e}")
             return self.get_fallback_response()
     
     def get_fallback_response(self) -> str:
-        """Fallback if API fails"""
-        return """POSITIVE_REPHRASING: Great work on this code! Let's explore some ways to make it even better.
-WHY_EXPLANATION: These improvements will help make your code more efficient and maintainable.
-CODE_IMPROVEMENT: # Improved version with better practices"""
+        """Fallback response if API fails"""
+        return """POSITIVE_REPHRASING: Great work on implementing this functionality! Let's explore some ways to make this code even better.
+WHY_EXPLANATION: These improvements will help make your code more efficient, readable, and maintainable.
+CODE_IMPROVEMENT: # Improved version would go here"""
+
+    def analyze_comment_severity(self, comment: str) -> str:
+        harsh_indicators = ['bad', 'wrong', 'terrible', 'awful', 'stupid', 'inefficient', 'horrible', 'trash']
+        moderate_indicators = ['could be better', 'consider', 'might want', 'should', 'redundant']
+        
+        comment_lower = comment.lower()
+        if any(i in comment_lower for i in harsh_indicators):
+            return "harsh"
+        elif any(i in comment_lower for i in moderate_indicators):
+            return "moderate"
+        else:
+            return "neutral"
     
-    def analyze_severity(self, comment: str) -> str:
-        """Check how harsh the comment is"""
-        harsh_words = ['bad', 'terrible', 'awful', 'wrong', 'stupid', 'horrible']
-        return "harsh" if any(word in comment.lower() for word in harsh_words) else "moderate"
-    
-    def get_resources(self, comment: str) -> List[str]:
-        """Get relevant learning resources"""
+    def get_relevant_resources(self, comment: str, code_language: str = "python") -> List[str]:
         resources = []
         comment_lower = comment.lower()
         
-        if "variable" in comment_lower or "name" in comment_lower:
-            resources.append("https://pep8.org/#naming-conventions")
-        if "boolean" in comment_lower or "== true" in comment_lower:
-            resources.append("https://pep8.org/#programming-recommendations")
-        if "inefficient" in comment_lower or "loop" in comment_lower:
-            resources.append("https://docs.python.org/3/tutorial/datastructures.html#list-comprehensions")
-            
+        if code_language.lower() == "python":
+            if "variable" in comment_lower or "name" in comment_lower:
+                resources.extend([
+                    "https://pep8.org/#naming-conventions",
+                    "https://realpython.com/python-pep8/#naming-conventions"
+                ])
+            if "boolean" in comment_lower or "== true" in comment_lower or "redundant" in comment_lower:
+                resources.extend([
+                    "https://pep8.org/#programming-recommendations",
+                    "https://docs.python.org/3/tutorial/datastructures.html#more-on-conditions"
+                ])
+            if "inefficient" in comment_lower or "performance" in comment_lower or "loop" in comment_lower:
+                resources.extend([
+                    "https://docs.python.org/3/tutorial/datastructures.html#list-comprehensions",
+                    "https://realpython.com/list-comprehension-python/"
+                ])
         return resources
     
+    def detect_experience_level(self, code_snippet: str) -> str:
+        beginner_patterns = ['== True', '== False', 'results = []', 'append(', 'range(len(']
+        intermediate_patterns = ['comprehension', 'lambda', 'yield', 'enumerate', 'zip']
+        
+        code_lower = code_snippet.lower()
+        beginner_score = sum(1 for p in beginner_patterns if p in code_lower)
+        intermediate_score = sum(1 for p in intermediate_patterns if p in code_lower)
+        
+        if beginner_score >= 2 and intermediate_score == 0:
+            return "beginner"
+        elif intermediate_score > 0:
+            return "intermediate"
+        else:
+            return "beginner"
+    
     def generate_empathetic_feedback(self, code_snippet: str, original_comment: str) -> Dict[str, str]:
-        """Transform harsh comment into empathetic feedback"""
+        severity = self.analyze_comment_severity(original_comment)
+        experience_level = self.detect_experience_level(code_snippet)
         
-        severity = self.analyze_severity(original_comment)
-        tone_guide = "Be extra gentle and encouraging" if severity == "harsh" else "Be supportive and constructive"
+        tone_instructions = {
+            "harsh": {
+                "beginner": "Be extra gentle, encouraging, and patient.",
+                "intermediate": "Be supportive and constructive."
+            },
+            "moderate": {
+                "beginner": "Be encouraging and educational.",
+                "intermediate": "Be professional and helpful."
+            },
+            "neutral": {
+                "beginner": "Be friendly and educational.",
+                "intermediate": "Be professional and direct."
+            }
+        }
         
-        prompt = f"""Transform this harsh code review comment into empathetic, educational feedback.
-
-{tone_guide}. The developer is learning and needs constructive guidance.
-
-Original comment: "{original_comment}"
-Code being reviewed:
+        tone_instruction = tone_instructions[severity][experience_level]
+        
+        prompt = f"""You are an experienced, empathetic senior developer...
+**Original harsh comment:** "{original_comment}"
+**Code being reviewed:**
 ```python
 {code_snippet}
-```
-
-Respond in EXACTLY this format:
-
-POSITIVE_REPHRASING: [Start with something positive, then gently suggest improvement]
-
-WHY_EXPLANATION: [Explain WHY this improvement matters - focus on principles like performance, readability, maintainability]
-
-CODE_IMPROVEMENT: [Show concrete improved code example]
-
-Make it encouraging, educational, and actionable!"""
+```"""
         
-        response = self.make_groq_request(prompt)
+        messages = [
+            {"role": "system", "content": "You are an empathetic senior developer."},
+            {"role": "user", "content": prompt}
+        ]
         
-        # Parse response
+        response_content = self.make_groq_request(messages, max_tokens=600, temperature=0.7)
+        parsed_response = self.parse_groq_response(response_content)
+        parsed_response["severity"] = severity
+        parsed_response["experience_level"] = experience_level
+        return parsed_response
+    
+    def parse_groq_response(self, content: str) -> Dict[str, str]:
         try:
-            positive = re.search(r'POSITIVE_REPHRASING:\s*(.*?)(?=WHY_EXPLANATION:|$)', response, re.DOTALL)
-            why = re.search(r'WHY_EXPLANATION:\s*(.*?)(?=CODE_IMPROVEMENT:|$)', response, re.DOTALL)
-            code = re.search(r'CODE_IMPROVEMENT:\s*(.*?)$', response, re.DOTALL)
+            positive_match = re.search(r'POSITIVE_REPHRASING:\s*(.*?)(?=WHY_EXPLANATION:|$)', content, re.DOTALL)
+            why_match = re.search(r'WHY_EXPLANATION:\s*(.*?)(?=CODE_IMPROVEMENT:|$)', content, re.DOTALL)
+            code_match = re.search(r'CODE_IMPROVEMENT:\s*(.*?)$', content, re.DOTALL)
             
             return {
-                "positive_rephrasing": positive.group(1).strip() if positive else "Great start! Let's improve this together.",
-                "why_explanation": why.group(1).strip() if why else "This will make your code better.",
-                "code_improvement": code.group(1).strip() if code else "# Improved code here",
-                "severity": severity
+                "positive_rephrasing": positive_match.group(1).strip() if positive_match else "",
+                "why_explanation": why_match.group(1).strip() if why_match else "",
+                "code_improvement": code_match.group(1).strip() if code_match else ""
             }
-        except:
+        except Exception:
             return {
-                "positive_rephrasing": "Great work! Let's enhance this code together.",
-                "why_explanation": "These improvements follow Python best practices.",
-                "code_improvement": "# See the detailed suggestions above",
-                "severity": severity
+                "positive_rephrasing": "",
+                "why_explanation": "",
+                "code_improvement": ""
             }
     
-    def generate_summary(self, feedback_count: int) -> str:
-        """Generate encouraging summary"""
-        prompt = f"""Write an encouraging 2-3 sentence summary for a developer who received {feedback_count} pieces of constructive code review feedback.
-
-The summary should:
-- Acknowledge their effort
-- Highlight learning opportunities  
-- Encourage continued growth
-- Be warm and mentor-like
-
-Keep it genuine and specific to code review context."""
+    def generate_holistic_summary(self, feedback_items: List[Dict], code_snippet: str) -> str:
+        experience_level = self.detect_experience_level(code_snippet)
+        feedback_count = len(feedback_items)
+        harsh_count = sum(1 for f in feedback_items if f.get("severity") == "harsh")
         
-        summary = self.make_groq_request(prompt)
+        prompt = f"""Write an encouraging summary..."""
         
-        # Fallback summary
-        if len(summary.strip()) < 20:
-            summary = f"Excellent work implementing this functionality! These {feedback_count} suggestions will help you develop strong coding practices. You're clearly thinking through the problem well - these refinements will make your code even more professional!"
+        messages = [
+            {"role": "system", "content": "You are a supportive coding mentor."},
+            {"role": "user", "content": prompt}
+        ]
         
+        summary = self.make_groq_request(messages, max_tokens=200, temperature=0.8)
         return summary.strip()
     
     def process_review(self, input_data: Dict) -> str:
-        """Main method - processes review and generates markdown"""
-        
         code_snippet = input_data["code_snippet"]
         review_comments = input_data["review_comments"]
         
-        print(f"🔄 Processing {len(review_comments)} comments with Groq AI...")
-        
-        # Start building markdown
-        markdown = [
+        markdown_sections = [
             "# 🤝 Empathetic Code Review Report",
             "",
             "**Original Code:**",
@@ -154,18 +189,16 @@ Keep it genuine and specific to code review context."""
         ]
         
         feedback_items = []
+        print(f"Processing {len(review_comments)} comments with Groq AI...")
         
-        # Process each comment
         for i, comment in enumerate(review_comments, 1):
-            print(f"  ⚡ Comment {i}/{len(review_comments)}...")
-            
+            print(f"  ⚡ Processing comment {i}/{len(review_comments)}...")
             feedback = self.generate_empathetic_feedback(code_snippet, comment)
             feedback_items.append(feedback)
             
-            resources = self.get_resources(comment)
-            
-            # Choose emoji based on severity
-            emoji = "🤗" if feedback["severity"] == "harsh" else "💪"
+            resources = self.get_relevant_resources(comment)
+            severity_emoji = {"harsh": "🤗", "moderate": "💪", "neutral": "✨"}
+            emoji = severity_emoji.get(feedback.get("severity"), "✨")
             
             section = f"""---
 
@@ -179,20 +212,17 @@ Keep it genuine and specific to code review context."""
 ```python
 {feedback['code_improvement']}
 ```"""
-            
             if resources:
                 section += "\n\n**📚 Helpful Resources:**\n"
                 for resource in resources:
-                    title = "PEP 8 Guide" if "pep8" in resource else "Python Documentation"
-                    section += f"- [{title}]({resource})\n"
+                    section += f"- [{resource}]({resource})\n"
             
-            markdown.append(section)
+            markdown_sections.append(section)
         
-        # Add encouraging summary
-        print("  🎯 Generating summary...")
-        summary = self.generate_summary(len(feedback_items))
+        print("  🎯 Generating encouraging summary...")
+        summary = self.generate_holistic_summary(feedback_items, code_snippet)
         
-        markdown.extend([
+        markdown_sections.extend([
             "\n---\n",
             "## 🎯 Overall Summary",
             "",
@@ -200,30 +230,16 @@ Keep it genuine and specific to code review context."""
             "",
             "---",
             "",
-            "*Every expert was once a beginner. Keep coding, keep growing! 🚀*"
+            "*Remember: Every expert was once a beginner.*",
+            "",
+            f"*Generated with ❤️ by Empathetic Code Reviewer using Groq AI*"
         ])
         
-        return '\n'.join(markdown)
+        return '\n'.join(markdown_sections)
 
-# 🎯 QUICK SETUP FUNCTION
-def setup_and_test():
-    """One function to rule them all - setup and test!"""
-    
-    print("🚀 Empathetic Code Reviewer Setup")
-    print("=" * 40)
-    
-    # Get Groq API key
-    api_key = input("📋 Enter your Groq API key (free at https://console.groq.com): ").strip()
-    
-    if not api_key:
-        print("❌ Need API key to continue!")
-        return
-    
-    # Initialize reviewer
-    reviewer = EmpathethicCodeReviewer(api_key)
-    print("✅ Groq API configured!")
-    
-    # Test with hackathon data
+
+def run_demo_test():
+    reviewer = EmpatheticCodeReviewer()
     test_input = {
         "code_snippet": "def get_active_users(users):\n    results = []\n    for u in users:\n        if u.is_active == True and u.profile_complete == True:\n            results.append(u)\n    return results",
         "review_comments": [
@@ -232,63 +248,14 @@ def setup_and_test():
             "Boolean comparison '== True' is redundant."
         ]
     }
-    
-    print("\n🎯 Generating Empathetic Review...")
-    print("=" * 40)
-    
-    # Generate review
-    result = reviewer.process_review(test_input)
-    
-    # Display result
-    print("\n📄 FINAL RESULT:")
+    print("\n🎯 Running Empathetic Code Review...")
     print("=" * 50)
-    print(result)
-    
-    # Save to file
+    result = reviewer.process_review(test_input)
     with open("empathetic_review.md", "w", encoding="utf-8") as f:
         f.write(result)
-    print(f"\n💾 Saved to 'empathetic_review.md'")
-    
-    print("\n🏆 SUCCESS! Your empathetic code reviewer is working!")
-    
-    return reviewer, result
+    print(f"\n💾 Report saved to 'empathetic_review.md'")
+    return result
 
-# 🎭 INTERACTIVE DEMO FUNCTION  
-def interactive_demo():
-    """For live demonstrations"""
-    print("🎭 LIVE DEMO MODE")
-    print("=" * 30)
-    
-    api_key = input("Groq API key: ").strip()
-    if not api_key:
-        print("Need API key!")
-        return
-        
-    reviewer = EmpathethicCodeReviewer(api_key)
-    
-    # Custom input
-    print("\n📝 Enter harsh comments to transform:")
-    comments = input("Comments (comma-separated): ").strip()
-    
-    if not comments:
-        comments = "This code is terrible,Bad variable names,Completely inefficient"
-    
-    # Use default code
-    test_input = {
-        "code_snippet": "def get_active_users(users):\n    results = []\n    for u in users:\n        if u.is_active == True:\n            results.append(u)\n    return results",
-        "review_comments": [c.strip() for c in comments.split(',')]
-    }
-    
-    result = reviewer.process_review(test_input)
-    
-    print("\n✨ TRANSFORMATION COMPLETE!")
-    print("=" * 40)
-    print(result)
 
-# 🚀 HACKATHON EXECUTION
 if __name__ == "__main__":
-    # Run this for hackathon
-    reviewer, result = setup_and_test()
-    
-    # Optional: Run interactive demo
-    # interactive_demo()
+    run_demo_test()
